@@ -1121,7 +1121,10 @@ fn fallback_with_locale(c: char, prefer: FaceId, locale: impl FnOnce() -> CjkLoc
     // Faces that are loaded already come next (cheap).
     for f in faces.iter().filter(|f| f.info.origin != "bundled" && f.bytes.get().is_some()) {
         if f.has_char(c) {
-            return f.id;
+            // A prior lookup may have loaded the bold cut first. Match the requested
+            // style within its family, as the exhaustive search does.
+            let matched = resolve_in(&f.info.family, &p.info.style).map(|r| r.face);
+            return matched.filter(|&id| face(id).has_char(c)).unwrap_or(f.id);
         }
     }
     let key = (c as u32 >> 8, prefer);

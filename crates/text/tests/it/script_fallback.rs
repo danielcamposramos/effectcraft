@@ -29,7 +29,15 @@ fn script_fallback_does_not_depend_on_earlier_lookups() {
         .zip(&before)
         .filter_map(|(&c, &id)| {
             let after = fonts::fallback_for(c, inter);
-            (after != id).then(|| format!("{c}: {} → {}", fonts::face(id).info.family, fonts::face(after).info.family))
+            (after != id).then(|| {
+                format!(
+                    "{c}: id={id} {} {} → id={after} {} {}",
+                    fonts::face(id).info.family,
+                    fonts::face(id).info.style,
+                    fonts::face(after).info.family,
+                    fonts::face(after).info.style
+                )
+            })
         })
         .collect();
     assert!(changed.is_empty(), "{changed:?}");
