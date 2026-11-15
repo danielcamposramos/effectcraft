@@ -365,7 +365,7 @@ impl Exporter<'_> {
         let mut clip = media_clip(fp::MediaRef::File { path: path.clone() }, info);
         clip.offline = f.missing;
         let bin = self.bin(it.and_then(|i| i.parent));
-        let id = self.fp.add_item(&name, fp::Label::Iris, fp::ItemKind::Media(clip), bin);
+        let id = self.fp.add_item(&name, fp::Label::Iris, fp::ItemKind::Media(clip.into()), bin);
         self.media.insert(path, id);
         id
     }
@@ -384,7 +384,7 @@ impl Exporter<'_> {
                 Some(b)
             }
         };
-        let id = self.fp.add_item(name, fp::Label::Violet, fp::ItemKind::Media(clip), bin);
+        let id = self.fp.add_item(name, fp::Label::Violet, fp::ItemKind::Media(clip.into()), bin);
         self.media.insert(r.path.clone(), id);
         id
     }
@@ -405,7 +405,7 @@ impl Exporter<'_> {
         );
         let clip = media_clip(fp::MediaRef::Generator(Generator::ColorMatte { color: [color[0], color[1], color[2], 1.0] }), info);
         let bin = self.bin(it.and_then(|i| i.parent));
-        let id = self.fp.add_item(&name, fp::Label::Rose, fp::ItemKind::Media(clip), bin);
+        let id = self.fp.add_item(&name, fp::Label::Rose, fp::ItemKind::Media(clip.into()), bin);
         self.media.insert(key, id);
         id
     }
@@ -540,6 +540,9 @@ impl Exporter<'_> {
                 comment: if m.chapter.is_empty() { String::new() } else { m.comment.clone() },
                 kind: if m.chapter.is_empty() { fp::MarkerKind::Comment } else { fp::MarkerKind::Chapter },
                 color: fp::Label::Green,
+                url: m.url.clone(),
+                author: String::new(),
+                custom_color: None,
             })
             .collect();
         if let Some(seq) = self.fp.sequence_mut(sid) {
@@ -736,6 +739,8 @@ fn media_info(name: &str, kind: MediaKind, duration: Tick, video: Option<VideoSp
             has_alpha,
             bitrate: None,
             hdr: None,
+            color_assumed: None,
+            stereo: None,
         }),
         audio_streams: audio
             .then(|| AudioStreamInfo { sample_rate: 48_000, channels: 2, codec: "pcm".into(), bits_per_sample: Some(16) })
@@ -754,6 +759,41 @@ fn media_clip(media: fp::MediaRef, info: MediaInfo) -> fp::MediaClip {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marker_links_survive_the_shared_timeline_bridge_without_invented_attribution() {
+        let mut p = Project::default();
+        let mut comp = effectcraft_project::Comp::new(200, 100, FrameRate::FPS_30, Tick::from_seconds_f64(1.0));
+        comp.markers.push(effectcraft_project::Marker { comment: "Original cue".into(), url: "https://example.org/cue".into(), ..Default::default() });
+        let cid = p.add_item("Original composition", effectcraft_color::Label::None, None, ItemKind::Comp(comp.into()));
+        let (opts, pre) = (ExportOptions::default(), HashMap::new());
+        let mut ex = Exporter {
+            p: &p,
+            opts: &opts,
+            pre: &pre,
+            fp: fp::Project::new("Original timeline"),
+            out: ExportOutput::default(),
+            seqs: HashMap::new(),
+            media: HashMap::new(),
+            bins: HashMap::new(),
+            stack: vec![],
+        };
+        let sid = ex.sequence(cid).unwrap();
+        let marker = &ex.fp.sequence(sid).unwrap().markers[0];
+        assert_eq!(marker.url, "https://example.org/cue");
+        assert!(marker.author.is_empty());
+        assert_eq!(marker.color, fp::Label::Green);
+        assert!(marker.custom_color.is_none());
+    }
+
+    #[test]
+    fn synthesized_media_info_keeps_unrecorded_stream_metadata_unknown() {
+        let info =
+            media_info("Original still", MediaKind::Still, Tick::from_seconds_f64(1.0), Some((200, 100, FrameRate::FPS_30, 1.0, "png".into(), true)), false);
+        let video = info.video.unwrap();
+        assert!(video.color_assumed.is_none());
+        assert!(video.stereo.is_none());
+    }
 
     /// A folder's bin is the same one each time it is asked for (a cached folder once answered
     /// `None`, so a folder's second item went to the project root); a non-item has no bin.

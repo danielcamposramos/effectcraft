@@ -37,6 +37,8 @@ fn info(kind: filmcraft_media::MediaKind, video: bool, audio: bool) -> filmcraft
             has_alpha: false,
             bitrate: None,
             hdr: None,
+            color_assumed: None,
+            stereo: None,
         }),
         audio_streams: audio
             .then(|| filmcraft_media::AudioStreamInfo { sample_rate: 48_000, channels: 2, codec: "pcm".into(), bits_per_sample: Some(16) })
@@ -60,7 +62,7 @@ fn media(p: &mut fp::Project, name: &str, path: &str, kind: filmcraft_media::Med
         proxy: None,
         identity: None,
     };
-    p.add_item(name, fp::Label::Iris, fp::ItemKind::Media(clip), bin)
+    p.add_item(name, fp::Label::Iris, fp::ItemKind::Media(clip.into()), bin)
 }
 
 fn rate() -> filmcraft_time::FrameRate {
@@ -486,6 +488,21 @@ FCM: NON-DROP FRAME
     missing.sort();
     assert_eq!(missing.len(), 2, "{missing:?}");
     assert!(missing.iter().all(|m| m.ends_with("up.mov") || m.ends_with("abs.mov")), "{missing:?}");
+}
+
+#[test]
+fn an_explicit_edl_source_file_can_name_the_same_path_as_an_outside_guess() {
+    let edl = "TITLE: CUT\nFCM: NON-DROP FRAME\n\n001 A001 V C 00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n* FROM CLIP NAME: /elsewhere/shared.mov\n\n002 A002 V C 00:00:00:00 00:00:01:00 00:00:01:00 00:00:02:00\n* FROM CLIP NAME: shared.mov\n* SOURCE FILE: /elsewhere/shared.mov\n";
+    let mut asked = Vec::new();
+    let mut probe_named = |path: &str| {
+        asked.push(path.to_owned());
+        probe(path)
+    };
+    let mut p = Project::default();
+    let opts = ImportOptions { name: "hand.edl".into(), edl_frame_rate: Some(25.0), base_dir: Some("/work".into()) };
+    let result = import(&mut p, edl.as_bytes(), Some(TimelineFormat::Edl), &opts, &mut probe_named).unwrap();
+    assert_eq!(asked, ["/elsewhere/shared.mov"]);
+    assert!(result.missing.is_empty(), "{:?}", result.missing);
 }
 
 /// Only an EDL's guessed paths are probed: an OTIO missing reference also gets a path built from
