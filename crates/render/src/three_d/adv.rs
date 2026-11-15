@@ -98,7 +98,7 @@ fn mb_samples(r: &Renderer, ctx: &EvalCtx, layers: &[&Layer]) -> usize {
     if !layers.iter().any(|l| scene::motion_blurred(r, ctx, l)) {
         return 1;
     }
-    if r.opts.draft { 4 } else { ctx.comp.motion_blur_samples.clamp(2, 64) as usize }
+    r.shutter_samples(ctx)
 }
 
 /// An Advanced 3D run prepared for an accelerator ([`crate::Accelerator::render_3d`], the GPU
@@ -145,11 +145,7 @@ impl<'p, 'a> Prepared<'p, 'a> {
             return scene::build(self.r, self.ctx, self.layers, self.out);
         }
         let ctx = self.ctx;
-        let fd = ctx.comp.frame_duration().seconds();
-        let (angle, phase) = (ctx.comp.shutter_angle / 360.0, ctx.comp.shutter_phase / 360.0);
-        let f = phase + angle * i as f64 / (n - 1) as f64;
-        let sub = ctx.at(ctx.time + effectcraft_time::Tick::from_seconds_f64(f * fd));
-        scene::build_at(self.r, ctx, Some(&sub), self.layers, self.out)
+        scene::build_sample(self.r, ctx, self.r.shutter_offset(ctx, i, n), self.layers, self.out)
     }
 }
 

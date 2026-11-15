@@ -1022,12 +1022,13 @@ fn ssaa_for(r: &Renderer, out: (u32, u32)) -> u32 {
 
 /// Add one layer of a run: a model or primitive mesh, an extruded text/shape layer, the nested
 /// layers of a collapsed precomp, or a textured card.
-fn emit_layer<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &Layer, b: &mut Builder) {
+fn emit_layer(r: &Renderer, ctx: &EvalCtx, frame_r: &Renderer, frame: &EvalCtx, offset: f64, layer: &Layer, b: &mut Builder) {
+    let ctx = if motion_blurred(frame_r, frame, layer) { ctx } else { frame };
     if layer.environment || layer.switches.adjustment || ctx.opacity(layer) <= 0.0 || !layer.has_video() {
         return;
     }
-    if let Some(collapsed) = r.collapsed(ctx, layer) {
-        collapsed_layer(r, ctx, layer, &collapsed, b);
+    if let Some(collapsed) = frame_r.collapsed(frame, layer) {
+        collapsed_layer(frame_r, frame, offset, layer, &collapsed, b);
     } else if layer.source.is_model() {
         model_layer(r, ctx, layer, b);
     } else if matches!(layer.source, LayerSource::Text | LayerSource::Shape)
@@ -1043,30 +1044,32 @@ fn emit_layer<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &Layer, b: &mut Bu
 /// (meshes, extrusions, cards) placed by the precomp layer's world transform, so they
 /// intersect, occlude and shadow the parent's layers. Nested 2D layers lie on the precomp
 /// layer's plane; nested lights and cameras are ignored (the parent's light the scene).
-fn collapsed_layer<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &Layer, collapsed: &crate::Collapsed, b: &mut Builder) {
+fn collapsed_layer(r: &Renderer, ctx: &EvalCtx, offset: f64, layer: &Layer, collapsed: &crate::Collapsed, b: &mut Builder) {
     let op = ctx.opacity(layer) as f32 * r.opacity_mul();
     let Some((sub, nctx)) = r.collapse_into(ctx, layer, collapsed, op) else { return };
-    let saved = b.outer;
-    b.outer = saved * ctx.world_matrix(layer);
     let t = nctx.time;
     let any_solo = nctx.comp.any_solo();
-    for l in nctx.comp.layers.iter().rev() {
-        if !l.is_active_at(t)
-            || l.is_light()
-            || matches!(l.source, LayerSource::Camera)
-            || (any_solo && !l.switches.solo)
-            || (!sub.opts.guides && l.switches.guide)
-        {
-            continue;
+    sub.with_root_sample(&nctx, offset, |sampled, at| {
+        let saved = b.outer;
+        b.outer = sampled.collapse3d.map_or(saved, |c| c.world);
+        for l in nctx.comp.layers.iter().rev() {
+            if !l.is_active_at(t)
+                || l.is_light()
+                || matches!(l.source, LayerSource::Camera)
+                || (any_solo && !l.switches.solo)
+                || (!sub.opts.guides && l.switches.guide)
+            {
+                continue;
+            }
+            emit_layer(sampled, at, &sub, &nctx, offset, l, b);
         }
-        emit_layer(&sub, &nctx, l, b);
-    }
-    b.outer = saved;
+        b.outer = saved;
+    });
 }
 
 /// Build the scene of a run of 3D layers.
 pub(crate) fn build(r: &Renderer, ctx: &EvalCtx, run: &[&Layer], out: (u32, u32)) -> Scene {
-    build_at(r, ctx, None, run, out)
+    build_sample(r, ctx, 0.0, run, out)
 }
 
 /// Whether a layer's motion is blurred (the renderer's gate: Motion Blur switch, comp setting,
@@ -1077,11 +1080,15 @@ pub(crate) fn motion_blurred(r: &Renderer, ctx: &EvalCtx, layer: &Layer) -> bool
 
 /// [`build`] at a motion-blur sub-sample: layers with Motion Blur on, the camera and the lights
 /// are evaluated at `sub`'s time; the other layers stay at `ctx`'s.
-pub(crate) fn build_at(r: &Renderer, ctx: &EvalCtx, sub: Option<&EvalCtx>, run: &[&Layer], out: (u32, u32)) -> Scene {
-    let base = ctx;
-    let at = sub.unwrap_or(ctx);
-    let ctx = at;
-    let cam = shutter_camera(r, ctx, base.time);
+pub(crate) fn build_sample(r: &Renderer, frame: &EvalCtx, offset: f64, run: &[&Layer], out: (u32, u32)) -> Scene {
+    r.with_root_sample(frame, offset, |sampled, at| build_world(r, frame, sampled, at, offset, run, out)).unwrap_or_else(|| {
+        log::error!("Cannot evaluate the collapsed composition's root shutter chain");
+        Scene::default()
+    })
+}
+
+fn build_world(frame_r: &Renderer, frame: &EvalCtx, r: &Renderer, ctx: &EvalCtx, offset: f64, run: &[&Layer], out: (u32, u32)) -> Scene {
+    let cam = shutter_camera(r, ctx, frame.time);
     let lin = r.pipe.linear || r.pipe.linear_blend;
     let ssaa = ssaa_for(r, out);
     let mut b = Builder {
@@ -1092,8 +1099,7 @@ pub(crate) fn build_at(r: &Renderer, ctx: &EvalCtx, sub: Option<&EvalCtx>, run: 
         outer: r.collapse3d.map_or(Mat4::IDENTITY, |c| c.world),
     };
     for layer in run {
-        let ctx = if sub.is_some() && motion_blurred(r, base, layer) { at } else { base };
-        emit_layer(r, ctx, layer, &mut b);
+        emit_layer(r, ctx, frame_r, frame, offset, layer, &mut b);
     }
     b.sort_triangles();
     // Lights, environment, shadows (Draft 3D: unlit, like After Effects). A collapsed

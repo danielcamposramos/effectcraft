@@ -45,6 +45,7 @@ mod fx_host;
 mod layers;
 mod opts;
 mod pipeline;
+mod sample;
 
 pub use accel::{Accelerator, Backend, FrameMemory, FxStep, FxTarget};
 pub use footage::{CancellableFootage, FloatCurve, FootageSource, NoFootage, is_vector_footage, missing_item_problem, vector_fit};

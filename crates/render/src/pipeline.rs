@@ -96,7 +96,7 @@ pub struct Collapsed {
 /// The property and media overrides of a collapsed precomp layer. `None` when its Essential
 /// Properties group or the source comp's definitions are missing (the flattened path then
 /// preserves the old behaviour).
-fn collapsed_instance(ctx: &EvalCtx, layer: &Layer, item: ItemId) -> Option<(Vec<PropertyOverride>, Vec<MediaOverride>)> {
+pub(crate) fn collapsed_instance(ctx: &EvalCtx, layer: &Layer, item: ItemId) -> Option<(Vec<PropertyOverride>, Vec<MediaOverride>)> {
     use effectcraft_project::essential::{self, ControlType, EgKind};
     let over = essential::overridden(layer);
     if over.is_empty() {
@@ -391,9 +391,11 @@ impl<'a> Renderer<'a> {
             world: self.collapse3d.map_or(world, |c| c.world * world),
             cam: three_d::compose::camera_for(self, ctx),
             parent: self.collapse3d.map_or(*ctx, |c| c.parent),
+            frame: self.collapse3d.map_or(*ctx, |c| c.frame),
+            view: self.collapse3d.map_or_else(|| if self.depth == 0 { self.opts.view } else { None }, |c| c.view),
         };
         // Motion blur follows the precomp layer's own motion too.
-        let link = Through { comp_id: ctx.comp_id, comp: ctx.comp, time: ctx.time, layer, blur: self.mb_on(ctx, layer) };
+        let link = Through { comp_id: ctx.comp_id, comp: ctx.comp, time: ctx.time, layer, blur: self.mb_on(ctx, layer), context: *ctx };
         let mut through = self.through;
         let slot = through.iter_mut().find(|t| t.is_none());
         let through_lost = self.through_lost || slot.is_none();

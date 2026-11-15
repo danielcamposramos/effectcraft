@@ -70,6 +70,7 @@ pub(crate) struct Through<'a> {
     pub(crate) layer: &'a Layer,
     /// The precomp layer is motion blurred: its own motion blurs the nested layers.
     pub(crate) blur: bool,
+    pub(crate) context: EvalCtx<'a>,
 }
 
 /// Collapsed precomps within collapsed precomps that motion blur follows (more than
@@ -85,6 +86,10 @@ pub(crate) struct Collapse3d<'a> {
     pub cam: three_d::CameraState,
     /// The outermost comp's context (its lights light the nested layers).
     pub parent: EvalCtx<'a>,
+    /// Frame selection is independent of the sampled time, including the first frame.
+    pub frame: EvalCtx<'a>,
+    /// Explicit viewer cameras remain held; document cameras follow the root clock.
+    pub view: Option<three_d::CameraState>,
 }
 
 /// Time spent on one layer of one frame (milliseconds).

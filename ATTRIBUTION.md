@@ -80,6 +80,9 @@ Screenshots of EffectCraft itself, rendered headlessly, showing only procedurall
 
 ## Code-drawn assets (original work, MIT OR Apache-2.0)
 
+- Root-shutter regression scenes (animated cameras, original rectangular solids, a primitive cube and ambient lights): `crates/render/src/three_d/tests/root_shutter.rs`; Daniel Campos Ramos, original work, MIT OR Apache-2.0.
+- Root-sampled light regression solids in `crates/gpu/src/tests/three_d.rs` (`root_shutter` controls): Daniel Campos Ramos, original work, MIT OR Apache-2.0.
+
 - UI icons drawn in code: `crates/ui-egui/src/icons.rs`, including the original filled favorite star (2026-10-11, EffectCraft contributors).
 - Procedural demo content (solids, shapes, gradients, text animations): `crates/engine/src/demo.rs`.
 - Built-in project templates (Lower Third, Title Card, Logo Reveal, Kinetic Type, Social Square, Vertical Story,

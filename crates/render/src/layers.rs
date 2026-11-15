@@ -16,6 +16,7 @@ struct PlacementBlend {
 /// containing comp's (they are drawn into its frames).
 #[derive(Clone, Copy)]
 struct Shutter {
+    enabled: bool,
     /// Shutter angle and phase as fractions of a frame.
     angle: f64,
     phase: f64,
@@ -178,12 +179,28 @@ impl<'a> Renderer<'a> {
             None => ctx.comp,
         };
         Shutter {
+            enabled: self.opts.motion_blur && c.enable_motion_blur,
             angle: c.shutter_angle / 360.0,
             phase: c.shutter_phase / 360.0,
             frame: c.frame_duration().seconds(),
             samples: c.motion_blur_samples,
             limit: c.motion_blur_adaptive_limit,
         }
+    }
+
+    pub(crate) fn shutter_samples(&self, ctx: &EvalCtx) -> usize {
+        let shutter = self.shutter(ctx);
+        if !shutter.enabled {
+            1
+        } else if self.opts.draft {
+            4
+        } else {
+            shutter.samples.clamp(2, 64) as usize
+        }
+    }
+
+    pub(crate) fn shutter_offset(&self, ctx: &EvalCtx, sample: usize, count: usize) -> f64 {
+        self.shutter(ctx).offset(sample, count)
     }
 
     /// Whether a layer moves within the shutter: its own motion blur, or that of a collapsed

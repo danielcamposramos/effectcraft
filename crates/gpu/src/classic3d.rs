@@ -94,7 +94,7 @@ fn light_kind(k: LightKind) -> u32 {
     }
 }
 
-fn write_geo(w: &mut Words, g: &PlaneGeo) {
+fn write_geo(w: &mut Words, g: &PlaneGeo, lights: (u32, u32)) {
     // The homography is defined up to scale: normalise it (by a positive factor, keeping the
     // sign tests) into f32's comfortable range.
     let m = g.hinv.0.iter().flatten().fold(0.0f64, |a, v| a.max(v.abs()));
@@ -108,6 +108,7 @@ fn write_geo(w: &mut Words, g: &PlaneGeo) {
     w.d([g.cam.eye.x, g.cam.eye.y, g.cam.eye.z, if g.cam.ortho { 1.0 } else { 0.0 }]);
     let f = g.cam.forward();
     w.d([f.x, f.y, f.z, 0.0]);
+    w.u([lights.0, lights.1, 0, 0]);
 }
 
 fn write_light(w: &mut Words, l: &LightState) {
@@ -120,7 +121,7 @@ fn write_light(w: &mut Words, l: &LightState) {
 }
 
 const PLANE_BYTES: usize = 12 * 16;
-const GEO_BYTES: usize = 10 * 16;
+const GEO_BYTES: usize = 11 * 16;
 const LIGHT_BYTES: usize = 6 * 16;
 
 /// Composite a prepared Classic 3D run over `canvas`. `None` when it cannot run here (the
@@ -139,6 +140,31 @@ pub(crate) fn draw_run(e: &mut Enc, run: &Run3d, canvas: &GpuImage) -> Option<Gp
         || run.planes.iter().any(|p| p.winv.0[3] != [0.0, 0.0, 0.0, 1.0] || p.geos.iter().any(|g| g.world.0[3] != [0.0, 0.0, 0.0, 1.0]))
     {
         return None;
+    }
+    // The renderer caps its root shutter at 64 samples; keep the public run bounded too.
+    if run.sample_lights.len() > 64 {
+        return None;
+    }
+    let light_count = run.sample_lights.iter().try_fold(run.lights.len(), |count, sample| count.checked_add(sample.len()))?;
+    let light_bytes = light_count.checked_mul(LIGHT_BYTES)?;
+    if light_bytes as u64 > e.g.device.limits().max_storage_buffer_binding_size {
+        return None;
+    }
+    let frame_lights = u32::try_from(run.lights.len()).ok()?;
+    let total_lights = u32::try_from(light_count).ok()?;
+    let mut lights = Words::default();
+    for light in &run.lights {
+        write_light(&mut lights, light);
+    }
+    let mut ranges = Vec::with_capacity(run.sample_lights.len());
+    let mut first = frame_lights;
+    for sample in &run.sample_lights {
+        let count = u32::try_from(sample.len()).ok()?;
+        ranges.push((first, count));
+        first = first.checked_add(count)?;
+        for light in sample {
+            write_light(&mut lights, light);
+        }
     }
     // Plane textures: the layer uploads (cached per buffer), with bokeh depth of field blurred
     // here when the plane has it.
@@ -195,16 +221,16 @@ pub(crate) fn draw_run(e: &mut Enc, run: &Run3d, canvas: &GpuImage) -> Option<Gp
         planes.u([p.mat.casts_shadows, p.mat.accepts_shadows, p.layer_id, p.order as u32]);
         planes.u([matte, run.seed ^ p.layer_id, 0, 0]);
         for g in &p.geos {
-            write_geo(&mut geos, g);
+            let range = match g.sample {
+                Some(index) => *ranges.get(index)?,
+                None => (0, frame_lights),
+            };
+            write_geo(&mut geos, g, range);
         }
         n_geos += p.geos.len() as u32;
     }
     if (mattes.len() * 4) as u64 > e.g.device.limits().max_storage_buffer_binding_size {
         return None;
-    }
-    let mut lights = Words::default();
-    for l in &run.lights {
-        write_light(&mut lights, l);
     }
     let mut casters = Words::default();
     for c in &run.casters {
@@ -216,7 +242,7 @@ pub(crate) fn draw_run(e: &mut Enc, run: &Run3d, canvas: &GpuImage) -> Option<Gp
     let cb = e.bytes(casters.at_least(16));
     let mb = e.data(&mattes);
     let mut p = Params::default();
-    p.u[0] = [run.planes.len() as u32, run.lights.len() as u32, run.casters.len() as u32, 0];
+    p.u[0] = [run.planes.len() as u32, total_lights, run.casters.len() as u32, 0];
     let out = e.scratch(w, h);
     e.dispatch_ext(
         "classic3d",

@@ -334,3 +334,71 @@ fn classic_3d_runs_render_on_the_cpu_without_the_kernel() {
         check(&format!("classic 3D without its kernel {depth:?}"), Some(d), 0.0);
     }
 }
+
+fn root_shutter_light_case(levels: usize) {
+    let Some(g) = gpu() else { return };
+    if !g.context().has_kernel("classic3d") {
+        assert!(std::env::var("EFFECTCRAFT_REQUIRE_GPU").as_deref() != Ok("1"), "required Classic 3D kernel is unavailable");
+        eprintln!("root shutter light comparison: Classic 3D kernel unavailable, explicitly skipping");
+        return;
+    }
+    let mut s = scene(BitDepth::Bpc32);
+    {
+        let comp = s.p.comp_mut(s.cid).unwrap();
+        comp.enable_motion_blur = true;
+        comp.shutter_angle = 90.0;
+        comp.shutter_phase = -45.0;
+        comp.motion_blur_samples = 7;
+    }
+    let mut plane = three_d(s.solid([0.8, 0.2, 0.1], 100, 80), [80.0, 50.0, 0.0], 0.0);
+    plane.switches.motion_blur = true;
+    for level in 0..levels {
+        let mut comp = Comp::new(W, H, FrameRate::FPS_24, Tick::from_seconds_f64(2.0));
+        comp.enable_motion_blur = true;
+        comp.shutter_angle = 360.0;
+        comp.shutter_phase = 90.0;
+        comp.motion_blur_samples = 13;
+        comp.layers = vec![plane].into();
+        let id = s.p.add_item(&format!("Collapsed {level}"), Label::Sandstone, None, ItemKind::Comp(comp.into()));
+        plane = build::layer(&mut s.p, &s.comp, "Collapsed", LayerSource::Comp { item: id }, (W, H), None);
+        plane.switches.three_d = true;
+        plane.switches.collapse = true;
+        plane.switches.motion_blur = true;
+    }
+    s.push(plane);
+    let mut ambient = build::layer(&mut s.p, &s.comp, "Animated ambient", LayerSource::Light { kind: LightKind::Ambient }, (W, H), None);
+    ambient.props.prop_mut("lightOptions/intensity").unwrap().keys =
+        [(0.49, 0.0), (0.5, 100.0), (0.51, 0.0)].into_iter().map(|(t, value)| Keyframe::new(Tick::from_seconds_f64(t), Value::Scalar(value))).collect();
+    s.push(ambient);
+    let r = Renderer::new(&s.p, &Pattern, opts());
+    let ctx = r.eval_ctx(s.cid, Tick::from_seconds_f64(0.5)).unwrap();
+    let layers = r.visible_layers(&ctx);
+    let run: Vec<_> = layers.iter().copied().filter(|layer| layer.is_3d() && layer.has_video()).collect();
+    let prep = r.prepare_3d_run(&ctx, &run, (W, H)).expect("the actual root run is prepared");
+    assert_eq!(prep.sample_lights.len(), 7);
+    assert!(prep.sample_lights.first().unwrap()[0].color[0] < prep.lights[0].color[0]);
+    let mut e = crate::context::Enc::new(g.context());
+    let canvas = e.image(W, H);
+    let out = crate::classic3d::draw_run(&mut e, &prep, &canvas).expect("the Classic kernel actually draws the run");
+    let image = e.download(&out).unwrap();
+    let mut cpu = effectcraft_raster::Image::new(W, H);
+    r.draw_3d_run(&ctx, &run, &mut cpu);
+    assert!(cpu.data.iter().filter(|p| p[3] > 0.5).count() > 4000);
+    let difference = diff(&cpu, &image, 1e-3);
+    assert!(difference.over * 200 <= difference.total, "root shutter through {levels} instances: {difference:?}");
+}
+
+#[test]
+fn classic_root_shutter_light_direct() {
+    root_shutter_light_case(0);
+}
+
+#[test]
+fn classic_root_shutter_light_one_instance() {
+    root_shutter_light_case(1);
+}
+
+#[test]
+fn classic_root_shutter_light_two_instances() {
+    root_shutter_light_case(2);
+}

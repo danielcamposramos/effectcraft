@@ -41,6 +41,8 @@ pub struct Geo {
     /// Output pixel bounds [x0, y0, x1, y1) covered by the plane.
     pub bbox: [i64; 4],
     pub cam: CameraState,
+    /// Root shutter sample, or `None` for a held plane.
+    pub sample: Option<usize>,
 }
 
 /// A prepared 3D layer.
@@ -137,7 +139,7 @@ fn geo(cam: &CameraState, world: Mat4, b: [f64; 4], comp: (f64, f64), scale: f64
     if bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
         return None;
     }
-    Some(Geo { hinv, depth, world, normal, bbox, cam: *cam })
+    Some(Geo { hinv, depth, world, normal, bbox, cam: *cam, sample: None })
 }
 
 /// Layer-space rectangle covered by a buffer.
@@ -239,11 +241,7 @@ pub(crate) fn visible_clip(r: &Renderer, ctx: &EvalCtx, layer: &Layer) -> Option
 
 /// Number of motion-blur sub-samples for a layer.
 fn mb_samples(r: &Renderer, ctx: &EvalCtx, layer: &Layer) -> usize {
-    if r.opts.motion_blur && ctx.comp.enable_motion_blur && r.layer_motion_blur(layer) {
-        if r.opts.draft { 4 } else { ctx.comp.motion_blur_samples.clamp(2, 64) as usize }
-    } else {
-        1
-    }
+    if r.opts.motion_blur && ctx.comp.enable_motion_blur && r.layer_motion_blur(layer) { r.shutter_samples(ctx) } else { 1 }
 }
 
 /// Prepare a layer (buffer, geometry, material). `None` when it shows nothing.
@@ -302,15 +300,14 @@ fn prepare_with<'a>(r: &Renderer, ctx: &EvalCtx<'_>, layer: &'a Layer, order: us
     let geos: Vec<Geo> = if n <= 1 {
         geo(&cam, world, bounds, comp, s, out, r.out_offset()).into_iter().collect()
     } else {
-        let fd = ctx.comp.frame_duration().seconds();
-        let angle = ctx.comp.shutter_angle / 360.0;
-        let phase = ctx.comp.shutter_phase / 360.0;
         (0..n)
             .filter_map(|i| {
-                let f = phase + angle * i as f64 / (n - 1) as f64;
-                let sub = ctx.at(ctx.time + Tick::from_seconds_f64(f * fd));
-                let c = shutter_camera(r, &sub, ctx.time);
-                geo(&c, outer * sub.world_matrix(layer) * local, bounds, comp, s, out, r.out_offset())
+                r.with_root_sample(ctx, r.shutter_offset(ctx, i, n), |sampled, sub| {
+                    let c = shutter_camera(sampled, sub, ctx.time);
+                    let world = sampled.collapse3d.map_or(Mat4::IDENTITY, |c| c.world);
+                    geo(&c, world * sub.world_matrix(layer) * local, bounds, comp, s, out, r.out_offset()).map(|g| Geo { sample: Some(i), ..g })
+                })
+                .flatten()
             })
             .collect()
     };
@@ -476,7 +473,8 @@ fn matte_for(r: &Renderer, ctx: &EvalCtx, layer: &Layer, out: (u32, u32)) -> Opt
             let its = prepare_all(r, ctx, &solo, 0, out, true);
             if !its.is_empty() {
                 let lights = scene_lights(ctx);
-                composite(&mut img, &its, &lights, &[], m.id.0 as u32);
+                let samples = sampled_lights(r, ctx, &its);
+                composite(&mut img, &its, &lights, &samples, &[], m.id.0 as u32);
             }
         } else if let Some(mb) = r.layer_buf(ctx, m) {
             r.place(ctx, m, &mb, &mut img, BlendMode::Normal, ctx.opacity(m) as f32);
@@ -501,6 +499,23 @@ fn matte_for(r: &Renderer, ctx: &EvalCtx, layer: &Layer, out: (u32, u32)) -> Opt
 /// Lights used for shading: none in Draft 3D (which also turns off shadows and depth of field).
 fn scene_lights(ctx: &EvalCtx) -> Vec<LightState> {
     if ctx.comp.draft_3d { vec![] } else { lights_at(ctx) }
+}
+
+fn sampled_lights(r: &Renderer, ctx: &EvalCtx, items: &[Item]) -> Vec<Vec<LightState>> {
+    if !items.iter().any(|item| item.geos.iter().any(|geo| geo.sample.is_some())) {
+        return vec![];
+    }
+    let count = r.shutter_samples(ctx);
+    (0..count)
+        .map(|i| {
+            r.with_root_sample(ctx, r.shutter_offset(ctx, i, count), |sampled, at| scene_lights(&sampled.collapse3d.map_or(*at, |c| c.parent))).unwrap_or_else(
+                || {
+                    log::error!("Cannot evaluate the collapsed composition's root shutter lights");
+                    vec![]
+                },
+            )
+        })
+        .collect()
 }
 
 /// Draw a run of consecutive 3D layers (bottom-to-top order) into `canvas`.
@@ -533,7 +548,7 @@ pub(crate) fn draw_run(r: &Renderer, ctx: &EvalCtx, run: &[&Layer], canvas: &mut
     let out = (canvas.width, canvas.height);
     let g = gather(r, ctx, run, out);
     let casters: Vec<&Item> = g.items.iter().chain(g.extra.iter()).filter(|i| r.opts.shadows() && i.mat.casts_shadows != 0 && !i.geos.is_empty()).collect();
-    composite(canvas, &g.items, &g.lights, &casters, run[0].id.0 as u32);
+    composite(canvas, &g.items, &g.lights, &g.samples, &casters, run[0].id.0 as u32);
     for l in run.iter().filter(|l| r.quality(l) == effectcraft_project::Quality::Wireframe) {
         r.draw_layer(ctx, l, canvas, false);
     }
@@ -545,6 +560,7 @@ struct Gathered<'a> {
     items: Vec<Item<'a>>,
     extra: Vec<Item<'a>>,
     lights: Vec<LightState>,
+    samples: Vec<Vec<LightState>>,
 }
 
 fn gather<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, run: &[&'a Layer], out: (u32, u32)) -> Gathered<'a> {
@@ -558,7 +574,7 @@ fn gather<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, run: &[&'a Layer], out: (u32,
             // Stack order with room for a collapsed precomp's layers in between.
             let i = i * 1024;
             if let Some(collapsed) = r.collapsed(ctx, l) {
-                return collapsed_items(r, ctx, l, &collapsed, i, out);
+                return collapsed_items(r.project, r, ctx, l, &collapsed, i, out);
             }
             let mut its = prepare_all(r, ctx, l, i, out, true);
             if !its.is_empty() {
@@ -585,18 +601,27 @@ fn gather<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, run: &[&'a Layer], out: (u32,
             .collect();
     }
     items.sort_by_key(|i| i.order);
-    Gathered { items, extra, lights }
+    let samples = sampled_lights(r, ctx, &items);
+    Gathered { items, extra, lights, samples }
 }
 
 /// A collapsed 3D precomp layer inside a 3D run: its nested layers become planes in this comp's
 /// 3D space (world = precomp layer's world × nested world), depth-sorted with the run, so they
 /// intersect the parent's 3D layers; nested 2D layers lie on the precomp layer's plane in stack
 /// order. (Nested adjustment layers are skipped here.)
-fn collapsed_items<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &'a Layer, collapsed: &crate::Collapsed, order: usize, out: (u32, u32)) -> Vec<Item<'a>> {
+fn collapsed_items<'a>(
+    project: &'a crate::Project,
+    r: &Renderer,
+    ctx: &EvalCtx,
+    layer: &'a Layer,
+    collapsed: &crate::Collapsed,
+    order: usize,
+    out: (u32, u32),
+) -> Vec<Item<'a>> {
     let op = ctx.opacity(layer) as f32 * r.opacity_mul();
     let Some((sub, nctx)) = r.collapse_into(ctx, layer, collapsed, op) else { return vec![] };
     let t = nctx.time;
-    let Some(nc) = r.project.comp(collapsed.item) else { return vec![] };
+    let Some(nc) = project.comp(collapsed.item) else { return vec![] };
     let any_solo = nc.any_solo();
     let nested: Vec<&'a Layer> = nc
         .layers
@@ -607,6 +632,10 @@ fn collapsed_items<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &'a Layer, co
     let mut items = Vec::new();
     for (k, l) in nested.into_iter().enumerate() {
         if nctx.opacity(l) <= 0.0 {
+            continue;
+        }
+        if let Some(nested) = sub.collapsed(&nctx, l) {
+            items.extend(collapsed_items(project, &sub, &nctx, l, &nested, order + 1 + k.min(1022), out));
             continue;
         }
         let mut its = prepare_all(&sub, &nctx, l, order + 1 + k.min(1022), out, true);
@@ -622,7 +651,7 @@ fn collapsed_items<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &'a Layer, co
 }
 
 /// Per-pixel depth-sorted compositing of prepared planes.
-fn composite(canvas: &mut Image, items: &[Item], lights: &[LightState], casters: &[&Item], seed: u32) {
+fn composite(canvas: &mut Image, items: &[Item], lights: &[LightState], samples: &[Vec<LightState>], casters: &[&Item], seed: u32) {
     let w = canvas.width as usize;
     canvas.rows_mut().for_each(|(y, row)| {
         let yi = y as i64;
@@ -638,7 +667,7 @@ fn composite(canvas: &mut Image, items: &[Item], lights: &[LightState], casters:
                 if xi < it.bbox[0] || xi >= it.bbox[2] {
                     continue;
                 }
-                if let Some((z, px)) = fragment(it, x as f64 + 0.5, y as f64 + 0.5, lights, casters) {
+                if let Some((z, px)) = fragment(it, x as f64 + 0.5, y as f64 + 0.5, lights, samples, casters) {
                     let px = match &it.matte {
                         Some(m) => {
                             let f = m[y * w + x];
@@ -690,7 +719,7 @@ fn before(a: &(f64, usize, Px, usize), b: &(f64, usize, Px, usize)) -> bool {
 }
 
 /// Shaded premultiplied fragment of a plane at an output pixel centre, with its depth.
-fn fragment(it: &Item, sx: f64, sy: f64, lights: &[LightState], casters: &[&Item]) -> Option<(f64, Px)> {
+fn fragment(it: &Item, sx: f64, sy: f64, lights: &[LightState], samples: &[Vec<LightState>], casters: &[&Item]) -> Option<(f64, Px)> {
     let n = it.geos.len();
     let mut acc = [0.0f32; 4];
     let mut depth = None;
@@ -701,6 +730,7 @@ fn fragment(it: &Item, sx: f64, sy: f64, lights: &[LightState], casters: &[&Item
             continue;
         }
         depth.get_or_insert(z);
+        let lights = g.sample.and_then(|i| samples.get(i)).map_or(lights, Vec::as_slice);
         let px = shade_texel(it, g, u, v, t, lights, casters);
         for c in 0..4 {
             acc[c] += px[c];
@@ -823,6 +853,8 @@ pub struct Run3d {
     /// Indices (into `planes`) of the shadow casters, in the CPU's order.
     pub casters: Vec<usize>,
     pub lights: Vec<LightState>,
+    /// One immutable light set per root shutter sample, shared by every plane.
+    pub sample_lights: Vec<Vec<LightState>>,
     /// Dissolve seed of the run.
     pub seed: u32,
 }
@@ -890,7 +922,7 @@ pub(crate) fn gpu_run(r: &Renderer, ctx: &EvalCtx, run: &[&Layer], out: (u32, u3
         })
         .collect();
     let casters = planes.iter().enumerate().filter(|(_, p)| r.opts.shadows() && p.mat.casts_shadows != 0 && !p.geos.is_empty()).map(|(i, _)| i).collect();
-    Some(Run3d { planes, casters, lights: g.lights, seed: run[0].id.0 as u32 })
+    Some(Run3d { planes, casters, lights: g.lights, sample_lights: g.samples, seed: run[0].id.0 as u32 })
 }
 
 // ------------------------------------------------------------------ auxiliary render pass

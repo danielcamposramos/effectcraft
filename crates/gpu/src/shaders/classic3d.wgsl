@@ -53,6 +53,8 @@ struct Geo {
     eye: vec4<f32>,
     // Camera forward (xyz).
     fwd: vec4<f32>,
+    // First light and light count of this geometry's root shutter sample.
+    light_range: vec4<u32>,
 }
 
 struct Light {
@@ -293,7 +295,8 @@ fn shadow_of(it: u32, l: u32, p: vec3<f32>) -> vec3<f32> {
 // compose::shade_texel (light::shade).
 fn shade_texel(it: u32, g: u32, u: f32, v: f32, t: vec4<f32>) -> vec4<f32> {
     let pl = planes[it];
-    let n_lights = P.u[0].y;
+    let gm = geos[g];
+    let n_lights = gm.light_range.y;
     let accepts_shadows = pl.ints2.y;
     if (n_lights == 0u || (pl.ints.z & 4u) == 0u) {
         if (accepts_shadows == 2u) {
@@ -301,7 +304,6 @@ fn shade_texel(it: u32, g: u32, u: f32, v: f32, t: vec4<f32>) -> vec4<f32> {
         }
         return t;
     }
-    let gm = geos[g];
     let a = t.w;
     let rgb = t.xyz / a;
     let p = affine(gm.w0, gm.w1, gm.w2, vec3<f32>(u, v, 0.0));
@@ -323,7 +325,8 @@ fn shade_texel(it: u32, g: u32, u: f32, v: f32, t: vec4<f32>) -> vec4<f32> {
     let metal = pl.mat1.x;
     let transmission = pl.mat1.y;
     let specular = pl.mat0.z;
-    for (var i = 0u; i < n_lights; i++) {
+    for (var j = 0u; j < n_lights; j++) {
+        let i = gm.light_range.x + j;
         let li = lights[i];
         if (li.ints.x == 0u) {
             amb += li.color.xyz;
