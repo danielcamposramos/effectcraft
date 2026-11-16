@@ -166,6 +166,7 @@ impl<'a> Renderer<'a> {
             through: [None; MAX_THROUGH],
             through_lost: false,
             whole_raster: false,
+            stereo: None,
         }
     }
 

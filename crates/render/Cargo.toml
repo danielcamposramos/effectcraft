@@ -10,6 +10,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+craft-stereo-camera = { path = "../../../craft-libs-common/crates/stereo-camera" }
+glam = "0.30"
 effectcraft-time = { workspace = true }
 effectcraft-geom = { workspace = true }
 effectcraft-color = { workspace = true }

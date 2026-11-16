@@ -22,10 +22,15 @@ impl Renderer<'_> {
             return Some(draw(self, &frame.at(frame.time + shift)));
         };
         if self.through_lost {
+            if let Some(pass) = self.stereo {
+                pass.fail("stereo root shutter exceeds the collapsed instance chain limit");
+            }
             return None;
         }
         let root = collapsed.frame.at(collapsed.frame.time + shift);
-        let camera = collapsed.view.unwrap_or_else(|| three_d::camera::frame_camera(&root, collapsed.frame.time));
+        let central = collapsed.view.unwrap_or_else(|| three_d::camera::frame_camera(&root, collapsed.frame.time));
+        let owner = Renderer { depth: 0, collapse3d: None, ..*self };
+        let camera = owner.eye_camera(&root, collapsed.frame.time, central);
         let mut instances: Vec<Instance<'_>> = Vec::with_capacity(MAX_THROUGH);
         for link in self.through.iter().map_while(Option::as_ref) {
             let parent = match instances.last() {

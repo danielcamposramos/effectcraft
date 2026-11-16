@@ -22,9 +22,10 @@ use effectcraft_project::{ItemKind, Layer, LayerSource, LightKind, PrimitiveKind
 use effectcraft_time::Tick;
 
 use super::shade::srgb_to_linear;
-use crate::three_d::camera::{CameraState, NEAR};
+use crate::three_d::camera::NEAR;
 use crate::three_d::compose::shutter_camera;
 use crate::three_d::light::{LightState, Material as ClassicMaterial};
+use crate::three_d::stereo_camera::ViewCamera;
 use crate::{EvalCtx, Renderer};
 
 /// One vertex in world space.
@@ -234,7 +235,7 @@ pub(crate) struct Builder {
     tex_keys: HashMap<(usize, bool), i32>,
     /// Per triangle: transparent and its sort depth.
     tri_depth: Vec<(bool, f32)>,
-    cam: CameraState,
+    cam: ViewCamera,
     /// World of the collapsed precomp layers the current layers are drawn through (identity at
     /// the top level).
     outer: Mat4,
@@ -1101,6 +1102,7 @@ fn build_world(frame_r: &Renderer, frame: &EvalCtx, r: &Renderer, ctx: &EvalCtx,
     for layer in run {
         emit_layer(r, ctx, frame_r, frame, offset, layer, &mut b);
     }
+    r.stereo_points(ctx, &cam, b.s.vertices.iter().map(|vertex| Vec3::from(vertex.pos.map(f64::from))));
     b.sort_triangles();
     // Lights, environment, shadows (Draft 3D: unlit, like After Effects). A collapsed
     // precomp's layers are lit by the outermost comp's lights.
@@ -1163,7 +1165,15 @@ fn build_world(frame_r: &Renderer, frame: &EvalCtx, r: &Renderer, ctx: &EvalCtx,
     } else {
         Mat4([[a, 0.0, bb, 0.0], [0.0, -c, -d, 0.0], [0.0, 0.0, 0.0, NEAR], [0.0, 0.0, 1.0, 0.0]])
     };
-    b.s.clip = m32(&(proj * cam.view));
+    if b.s.env.is_some() {
+        r.stereo_infinity(ctx);
+    }
+    let mut clip = proj * cam.view;
+    let (centre, depth) = cam.clip_correction(s, ow);
+    for i in 0..4 {
+        clip.0[0][i] += centre * clip.0[3][i] + depth * cam.view.0[2][i];
+    }
+    b.s.clip = m32(&clip);
     b.s.view = m32(&cam.view);
     let f = cam.forward();
     b.s.cam_fwd = [f.x as f32, f.y as f32, f.z as f32];

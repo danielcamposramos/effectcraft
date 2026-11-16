@@ -25,6 +25,7 @@ use rayon::prelude::*;
 
 use super::camera::{CameraState, NEAR, frame_camera};
 use super::light::{LightState, Material, lights_at, shade};
+use super::stereo_camera::ViewCamera;
 use crate::{EvalCtx, Renderer};
 
 /// One position of a plane (several with motion blur).
@@ -91,7 +92,7 @@ impl Item<'_> {
 }
 
 /// Build the plane geometry of a layer for a camera.
-fn geo(cam: &CameraState, world: Mat4, b: [f64; 4], comp: (f64, f64), scale: f64, out: (u32, u32), off: (f64, f64)) -> Option<Geo> {
+fn geo(cam: &ViewCamera, world: Mat4, b: [f64; 4], comp: (f64, f64), scale: f64, out: (u32, u32), off: (f64, f64)) -> Option<Geo> {
     // The output canvas may start at `off` (scaled comp pixels): region of interest / Extended
     // Viewer frames.
     let proj = Mat4::translate(vec3(-off.0, -off.1, 0.0)) * Mat4::scale(vec3(scale, scale, 1.0)) * cam.projection(comp.0, comp.1);
@@ -139,7 +140,7 @@ fn geo(cam: &CameraState, world: Mat4, b: [f64; 4], comp: (f64, f64), scale: f64
     if bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
         return None;
     }
-    Some(Geo { hinv, depth, world, normal, bbox, cam: *cam, sample: None })
+    Some(Geo { hinv, depth, world, normal, bbox, cam: **cam, sample: None })
 }
 
 /// Layer-space rectangle covered by a buffer.
@@ -169,21 +170,22 @@ fn unproject(g: &Geo, sx: f64, sy: f64) -> Option<(f64, f64, f64)> {
 }
 
 /// The camera a renderer uses at a context time (view override only for the top-level comp).
-pub(crate) fn camera_for(r: &Renderer, ctx: &EvalCtx) -> CameraState {
+pub(crate) fn camera_for(r: &Renderer, ctx: &EvalCtx) -> ViewCamera {
     shutter_camera(r, ctx, ctx.time)
 }
 
 /// [`camera_for`] at a motion-blur sub-sample of the frame at time `frame`: the frame's camera,
 /// evaluated at the sub-sample's time (see [`frame_camera`]).
-pub(crate) fn shutter_camera(r: &Renderer, sub: &EvalCtx, frame: Tick) -> CameraState {
+pub(crate) fn shutter_camera(r: &Renderer, sub: &EvalCtx, frame: Tick) -> ViewCamera {
     // Collapsed precomps see through the parent's camera.
     if let Some(c) = r.collapse3d {
         return c.cam;
     }
-    match r.opts.view {
+    let central = match r.opts.view {
         Some(v) if r.depth == 0 => v,
         _ => frame_camera(sub, frame),
-    }
+    };
+    r.eye_camera(sub, frame, central)
 }
 
 /// The size of the comp the camera looks through: a collapsed precomp's layers are projected
@@ -298,6 +300,7 @@ fn prepare_with<'a>(r: &Renderer, ctx: &EvalCtx<'_>, layer: &'a Layer, order: us
     }
     let n = if in_run { mb_samples(r, ctx, layer) } else { 1 };
     let geos: Vec<Geo> = if n <= 1 {
+        r.stereo_plane(ctx, &cam, world, bounds);
         geo(&cam, world, bounds, comp, s, out, r.out_offset()).into_iter().collect()
     } else {
         (0..n)
@@ -305,6 +308,7 @@ fn prepare_with<'a>(r: &Renderer, ctx: &EvalCtx<'_>, layer: &'a Layer, order: us
                 r.with_root_sample(ctx, r.shutter_offset(ctx, i, n), |sampled, sub| {
                     let c = shutter_camera(sampled, sub, ctx.time);
                     let world = sampled.collapse3d.map_or(Mat4::IDENTITY, |c| c.world);
+                    sampled.stereo_plane(sub, &c, world * sub.world_matrix(layer) * local, bounds);
                     geo(&c, world * sub.world_matrix(layer) * local, bounds, comp, s, out, r.out_offset()).map(|g| Geo { sample: Some(i), ..g })
                 })
                 .flatten()
@@ -1147,10 +1151,11 @@ pub(crate) fn sky_draw(r: &Renderer, ctx: &EvalCtx, layer: &Layer) -> Option<Sky
     }
     let cam = camera_for(r, ctx);
     let v3 = |v: Vec3| [v.x, v.y, v.z];
+    r.stereo_infinity(ctx);
     Some(SkyDraw {
         buf,
         opacity: op,
-        fwd: v3(cam.forward()),
+        fwd: v3(cam.sky_forward()),
         right: v3(cam.right()),
         down: v3(cam.down()),
         zoom: cam.zoom,

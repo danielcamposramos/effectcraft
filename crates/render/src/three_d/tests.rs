@@ -741,3 +741,5 @@ fn rig_orbit_keeps_distance_and_pan_moves_both() {
 }
 
 mod root_shutter;
+
+mod stereo;

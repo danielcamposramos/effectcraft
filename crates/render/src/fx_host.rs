@@ -142,6 +142,10 @@ impl EffectHost for FxHost<'_, '_, '_> {
     }
 
     fn comp_scene(&self) -> Option<effectcraft_effects::CompScene> {
+        if let Some(pass) = self.r.stereo_owner(self.ctx) {
+            pass.fail("This camera-space effect does not yet report its internal scene depth bounds; a stereo pair cannot be produced safely.");
+            return None;
+        }
         Some(comp_scene(self.ctx, self.layer)?.rebased(self.origin))
     }
 

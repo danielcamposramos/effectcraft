@@ -1214,6 +1214,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-stereo-camera"
+version = "0.1.0"
+dependencies = [
+ "glam",
+]
+
+[[package]]
 name = "craft-svg"
 version = "0.1.0"
 dependencies = [
@@ -1947,6 +1954,7 @@ dependencies = [
 name = "effectcraft-render"
 version = "0.24.1"
 dependencies = [
+ "craft-stereo-camera",
  "effectcraft-color",
  "effectcraft-effects",
  "effectcraft-geom",
@@ -1957,6 +1965,7 @@ dependencies = [
  "effectcraft-raster",
  "effectcraft-text",
  "effectcraft-time",
+ "glam",
  "kurbo",
  "log",
  "lz4_flex",
@@ -3171,6 +3180,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.30.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
 
 [[package]]
 name = "glifo"
@@ -4693,7 +4708,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

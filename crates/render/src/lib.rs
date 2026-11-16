@@ -46,6 +46,7 @@ mod layers;
 mod opts;
 mod pipeline;
 mod sample;
+pub mod stereo;
 
 pub use accel::{Accelerator, Backend, FrameMemory, FxStep, FxTarget};
 pub use footage::{CancellableFootage, FloatCurve, FootageSource, NoFootage, is_vector_footage, missing_item_problem, vector_fit};
@@ -105,6 +106,7 @@ pub struct Renderer<'a> {
     through_lost: bool,
     /// Layer-space consumers must not use the viewport raster optimization.
     pub(crate) whole_raster: bool,
+    pub(crate) stereo: Option<&'a stereo::Pass>,
 }
 
 #[cfg(test)]

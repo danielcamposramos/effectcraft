@@ -83,7 +83,7 @@ pub(crate) struct Collapse3d<'a> {
     /// Nested comp world → parent world (the precomp layer's world transform).
     pub world: Mat4,
     /// The parent's camera.
-    pub cam: three_d::CameraState,
+    pub cam: three_d::stereo_camera::ViewCamera,
     /// The outermost comp's context (its lights light the nested layers).
     pub parent: EvalCtx<'a>,
     /// Frame selection is independent of the sampled time, including the first frame.
