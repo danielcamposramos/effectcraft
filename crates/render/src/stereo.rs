@@ -1,4 +1,6 @@
 //! Complete CPU eye pairs of one immutable composition frame.
+mod frozen_footage;
+use frozen_footage::FrozenFootage;
 use std::sync::Mutex;
 
 use crate::three_d::camera::{CameraState, NEAR, parent_world};
@@ -28,6 +30,9 @@ pub struct StereoFrame {
     pub samples: [Vec<StereoSample>; 2],
     /// Camera-depth / zero-plane-depth bounds, over all root shutter samples.
     pub depths: [f64; 2],
+    /// Frozen query counts: float frames, byte frames, vectors, models, channels and audio.
+    /// Unavailable results are retained too, so a pending input cannot resolve between eyes.
+    pub resource_queries: [usize; 6],
 }
 
 struct Observation {
@@ -177,24 +182,22 @@ impl Renderer<'_> {
             return Err("stereo_frame requires the CPU compositor and private eye state".into());
         }
         let opts = RenderOpts { scale, roi: None, ..self.opts };
+        let resources = FrozenFootage::new(self.footage);
+        resources.check()?;
         let probe = Pass::new(comp, None, request, [1.0, 1.0], false);
-        let renderer = Renderer { stereo: Some(&probe), whole_raster: true, expr: self.expr, ..Renderer::new(self.project, self.footage, opts) };
+        let renderer = Renderer { stereo: Some(&probe), whole_raster: true, expr: self.expr, ..Renderer::new(self.project, &resources, opts) };
         let _ = renderer.comp_frame_cpu(comp, time);
-        if self.footage.called_off() {
-            return Err("stereo frame was cancelled during scene preparation".into());
-        }
+        resources.check()?;
         let observed = probe.finish()?;
         let depths = if observed.near.is_finite() { [observed.near, observed.far] } else { [1.0, 1.0] };
         let infinity = observed.infinity;
         drop(observed);
         let render_eye = |eye| -> Result<(Image, Vec<StereoSample>), String> {
             let pass = Pass::new(comp, Some(eye), request, depths, infinity);
-            let renderer = Renderer { stereo: Some(&pass), whole_raster: true, expr: self.expr, ..Renderer::new(self.project, self.footage, opts) };
+            let renderer = Renderer { stereo: Some(&pass), whole_raster: true, expr: self.expr, ..Renderer::new(self.project, &resources, opts) };
             let image = renderer.comp_frame_cpu(comp, time);
             let state = pass.finish()?;
-            if self.footage.called_off() {
-                return Err("stereo frame was cancelled before the pair completed".into());
-            }
+            resources.check()?;
             let mut samples = state.samples.clone();
             samples.sort_by_key(|sample| sample.time);
             Ok((image, samples))
@@ -204,6 +207,6 @@ impl Renderer<'_> {
         if left_samples != right_samples {
             return Err("stereo eyes evaluated different root scene samples".into());
         }
-        Ok(StereoFrame { eyes: [left, right], samples: [left_samples, right_samples], depths })
+        Ok(StereoFrame { eyes: [left, right], samples: [left_samples, right_samples], depths, resource_queries: resources.counts() })
     }
 }

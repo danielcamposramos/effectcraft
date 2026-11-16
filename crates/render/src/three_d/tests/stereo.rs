@@ -220,3 +220,51 @@ fn an_uncollapsed_composition_keeps_its_authored_flat_camera_boundary() {
     let b = center(&result.eyes[1], 2);
     assert!((a.0 - b.0).abs() < 1e-8 && (a.1 - b.1).abs() < 1e-8, "an authored flat precomp stays flat: {a:?} {b:?}");
 }
+
+#[test]
+fn decoded_scene_inputs_are_frozen_before_either_eye_is_rendered() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct ChangingSource(AtomicUsize);
+    impl crate::FootageSource for ChangingSource {
+        fn frame(&self, _item: ItemId, _footage: &effectcraft_project::Footage, _time: Tick) -> Option<Arc<crate::Image>> {
+            let n = self.0.fetch_add(1, Ordering::SeqCst);
+            let mut image = crate::Image::new(W, H);
+            image.data.fill(if n.is_multiple_of(2) { [1.0, 0.0, 0.0, 1.0] } else { [0.0, 0.0, 1.0, 1.0] });
+            Some(Arc::new(image))
+        }
+    }
+    let (mut project, id, mut comp) = setup();
+    let footage = effectcraft_project::Footage { path: "synthetic-pending-image.png".into(), width: W, height: H, has_video: true, ..Default::default() };
+    let source_id = project.add_item("Changing source", Label::Red, None, ItemKind::Footage(footage));
+    let layer = build::layer(&mut project, &comp, "Shared scene image", LayerSource::Footage { item: source_id }, (W, H), None);
+    comp.layers.push(layer);
+    *project.comp_mut(id).unwrap() = comp;
+    let source = ChangingSource(AtomicUsize::new(0));
+    let pair = Renderer::new(&project, &source, RenderOpts::default())
+        .stereo_frame(id, Tick::ZERO, StereoRequest { width: 200, budget: Budget { popped: 12.0, sunk: 8.0 } })
+        .unwrap();
+    assert!(pair.eyes[0].data == pair.eyes[1].data, "the same composition time cannot resolve two different source worlds");
+    assert_eq!(source.0.load(Ordering::SeqCst), 1, "preparation and both eye renders must share one decoded scene input");
+    assert!(pair.eyes[0].get(100, 50)[0] > 0.9);
+}
+
+#[test]
+fn an_unavailable_required_scene_image_is_an_error_not_a_blank_pair() {
+    let (mut project, id, mut comp) = setup();
+    let footage = effectcraft_project::Footage { path: "synthetic-unavailable.png".into(), width: W, height: H, has_video: true, ..Default::default() };
+    let input = project.add_item("Unavailable image", Label::Red, None, ItemKind::Footage(footage));
+    comp.layers.push(build::layer(&mut project, &comp, "Required scene input", LayerSource::Footage { item: input }, (W, H), None));
+    *project.comp_mut(id).unwrap() = comp;
+    let result = Renderer::new(&project, &NoFootage, RenderOpts::default()).stereo_frame(
+        id,
+        Tick::ZERO,
+        StereoRequest { width: 200, budget: Budget { popped: 12.0, sunk: 8.0 } },
+    );
+    assert!(
+        matches!(result,Err(error) if error.contains("input")||error.contains("unavailable")),
+        "an unresolved source cannot be published as a complete world"
+    );
+}

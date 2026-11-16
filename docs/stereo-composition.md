@@ -16,7 +16,11 @@ Environment backgrounds reserve infinity.
 Flat art retains its ordinary projection.
 
 Each eye owns its renderer, processed buffers and effect state; no shared mutable accelerator or processed-layer cache is accepted.
-Decoded source frames may be shared through the footage source.
+One per-pair decoded-input snapshot retains float and byte frames, vector rasters, models, auxiliary channels and audio queries through preparation and both eyes.
+The key includes the complete footage interpretation and proxy descriptor, exact source time, requested decode size and float curve.
+Optional unavailable results are frozen too; a required image or model that cannot resolve returns the source's error instead of publishing a blank world.
+Cancellation still reaches the underlying source, and the snapshot is discarded after the pair.
+The snapshot retains immutable decoded inputs; processed effects and histories remain private to each eye.
 Both eyes must report exactly the same evaluated central cameras, root sample times and baselines.
 Cancellation, malformed cameras, interrupted root instance chains and invalid depth feedback return an error, never a partial pair.
 The ordinary renderer and its acceleration routes are unchanged.
