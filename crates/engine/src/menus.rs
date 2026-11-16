@@ -1173,6 +1173,10 @@ View
     My Custom RGB... | view.customRgb
     Custom... | view.simulateOutput {"profile":"custom"}
   ---
+  Enable 3D | view.stereo
+  Render resolution per eye | view.stereoResolution
+  Display Settings | view.displaySettings
+  ---
   Show Rulers | view.rulers
   Panel Background Color
     Black | view.panelBackground {"color":"black"}

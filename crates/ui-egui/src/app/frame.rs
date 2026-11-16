@@ -296,6 +296,8 @@ impl EffectcraftApp {
             self.advance_playback(ctx, scale, now, active, cid);
         }
         self.drain_control(ctx, now);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::stereo_view::tick(self, ctx);
         // A clean project may have passed the close guard before a control script created
         // unsaved edits and suspended. Cancel that same tick's close before the host handles it.
         if self.session.script_ui.render_host.is_some() {
@@ -406,6 +408,8 @@ impl EffectcraftApp {
         }
         panels::crypto_pick::pass_start(self, &ctx);
         self.frame(ui);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::stereo_view::settings(self, &ctx);
         panels::crypto_pick::upkeep(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         pointer_wrap::finish_native(&ctx, _frame);

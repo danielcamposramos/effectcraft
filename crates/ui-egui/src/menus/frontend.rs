@@ -91,6 +91,33 @@ fn toggle(slot: &mut bool, p: &Value) -> Value {
 
 /// Perform a frontend command (from `Event::Frontend`).
 pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Value) -> Result<Value, String> {
+    if matches!(id, "view.stereo" | "view.stereoResolution" | "view.displaySettings") {
+        #[cfg(target_arch = "wasm32")]
+        return Err("The stereo companion requires the native desktop app".into());
+        #[cfg(not(target_arch = "wasm32"))]
+        match id {
+            "view.stereo" => {
+                app.ui.stereo.enabled = match p.get("enabled") {
+                    Some(value) => value.as_bool().ok_or("enabled must be a boolean")?,
+                    None => !app.ui.stereo.enabled,
+                }
+            }
+            "view.stereoResolution" => {
+                if p.get("document").and_then(Value::as_bool) == Some(true) {
+                    app.ui.stereo.width = None;
+                } else if let Some(value) = p.get("width") {
+                    let width =
+                        value.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| *n > 0).ok_or("per-eye width must be a positive 32-bit integer")?;
+                    app.ui.stereo.width = Some(width);
+                } else {
+                    app.stereo_view.get_or_insert_with(Default::default).options_open = true;
+                }
+            }
+            _ => crate::stereo_view::display_settings()?,
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        return Ok(json!(app.ui.stereo));
+    }
     let now = app.now();
     let v = &mut app.ui.viewer;
     Ok(match id {

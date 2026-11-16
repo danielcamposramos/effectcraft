@@ -40,6 +40,9 @@ pub mod panels;
 mod pointer_wrap;
 pub mod prefs_live;
 pub mod state;
+pub mod stereo_settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stereo_view;
 pub mod theme;
 pub mod updates_ui;
 pub mod widgets;
@@ -267,6 +270,8 @@ impl Playback {
 }
 
 pub struct EffectcraftApp {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub stereo_view: Option<stereo_view::View>,
     pub session: Session,
     pub ui: UiState,
     workspace_store: workspace_state::WorkspaceStore,

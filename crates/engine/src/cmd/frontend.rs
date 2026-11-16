@@ -58,6 +58,9 @@ pub fn specs() -> Vec<CommandSpec> {
             has_comp
         ),
         // Viewer.
+        fe!("view.stereo", "Enable 3D", ["View"], None, "{enabled?: bool}", has_comp),
+        fe!("view.stereoResolution", "Render resolution per eye", ["View"], None, "{width?, document?: bool}", has_comp),
+        fe!("view.displaySettings", "Display Settings", ["View"], None, "{}", always),
         fe!("view.zoomIn", "Zoom In", ["View"], Some("."), "{}", has_comp),
         fe!("view.zoomOut", "Zoom Out", ["View"], Some(","), "{}", has_comp),
         fe!("view.rulers", "Show Rulers", ["View"], Some("Cmd+R"), "{value?}", always),

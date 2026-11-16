@@ -7,6 +7,7 @@ use crate::EffectcraftApp;
 
 /// Effect names, keyed by effect id (#821).
 pub(crate) mod effects;
+pub(crate) mod stereo;
 /// Translations for the panels, tooltips and dialogs below the menu bar (see the module docs).
 pub(crate) mod ui;
 use effectcraft_engine::menus::{MenuEntry, MenuNode};
@@ -14,7 +15,7 @@ use effectcraft_engine::menus::{MenuEntry, MenuNode};
 pub(crate) use ui::catalog_characters;
 pub(crate) use ui::{set_current, tr, tr_args};
 
-/// Every language with a catalog, in the order Settings ▸ General ▸ Language lists them.
+/// Every language with a menu catalog, in the order Settings ▸ General ▸ Language lists them.
 const CATALOG_CODES: [&str; 13] = ["cs", "de", "es", "fr", "pl", "pt-br", "sv", "ru", "uk", "ka", "ja", "zh-hans", "zh-hant"];
 
 /// The active interface language: the stored preference when it names a catalog, otherwise `en`
@@ -28,6 +29,9 @@ pub(crate) fn language(app: &EffectcraftApp) -> &'static str {
 
 /// `stored` as the language to show: a catalog's code, otherwise `en`.
 fn code(stored: &str) -> &'static str {
+    if stored == "ko" {
+        return "ko";
+    }
     CATALOG_CODES.iter().copied().find(|c| *c == stored).unwrap_or("en")
 }
 
@@ -128,7 +132,7 @@ fn first_supported(requested: Option<&str>, browser: &[String], drawable: impl F
 /// rather than draw boxes; `?lang=` and a language chosen in Settings still select them.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn web_draws(language: &str) -> bool {
-    !matches!(language, "ja" | "zh-hans" | "zh-hant" | "ka")
+    !matches!(language, "ja" | "ko" | "zh-hans" | "zh-hant" | "ka")
 }
 
 /// The language EffectCraft shows for a BCP 47 locale (`ja-JP` → `ja`, `zh-Hans-CN` → `zh-hans`,
@@ -141,6 +145,7 @@ fn supported(locale: Option<&str>) -> &'static str {
     let rest: Vec<String> = parts.map(|p| p.to_ascii_lowercase()).collect();
     match primary.as_str() {
         "ja" => "ja",
+        "ko" => "ko",
         "uk" => "uk",
         "es" => "es",
         "cs" => "cs",
@@ -180,6 +185,11 @@ const REVEAL_FINDER: &[(&str, &str, &str)] = &[
 
 pub(crate) fn label<'a>(app: &EffectcraftApp, command: &str, source: &'a str) -> &'a str {
     let language = language(app);
+    if matches!(command, "view.stereo" | "view.stereoResolution" | "view.displaySettings")
+        && let Some(text) = stereo::lookup(language, source)
+    {
+        return text;
+    }
     // The engine names the platform's file manager before the catalog sees the label, so on
     // Windows and Linux the source is no longer "Finder" and the catalog's row misses. Every
     // language that names a file manager says so here (#1450); a language with no row keeps the
@@ -269,6 +279,9 @@ pub(crate) fn context_item(command: &str, params: &serde_json::Value, source: &s
 }
 
 pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> String {
+    if matches!(e.command.as_str(), "view.stereo" | "view.stereoResolution" | "view.displaySettings") {
+        return label(app, &e.command, &shown).to_owned();
+    }
     // The generated Effect menu's entries label themselves with the effect's registry name; the
     // catalog replaces it with the interface language's (#821). The entry keeps its command and
     // its `{"effect": <id>}` params, so a script, an expression or the control channel is
@@ -9287,7 +9300,15 @@ mod tests {
 
     #[test]
     fn ukrainian_catalog_matches_the_settings_registry() {
-        let codes: Vec<_> = effectcraft_engine::prefs::LANGUAGES.iter().map(|(_, code)| *code).filter(|code| !matches!(*code, "system" | "en")).collect();
+        // Korean is explicitly a native 3D-only catalog, never a full menu catalog.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            assert!(effectcraft_engine::prefs::LANGUAGES.contains(&("한국어 (3D)", "ko")));
+            assert!(stereo::LANGUAGES.contains(&"ko"));
+            assert!(!CATALOG_CODES.contains(&"ko"));
+        }
+        let codes: Vec<_> =
+            effectcraft_engine::prefs::LANGUAGES.iter().map(|(_, code)| *code).filter(|code| !matches!(*code, "system" | "en" | "ko")).collect();
         assert_eq!(codes, CATALOG_CODES);
         assert!(effectcraft_engine::prefs::LANGUAGES.contains(&("Українська", "uk")));
         assert_eq!(code("uk"), "uk");

@@ -35,6 +35,8 @@ impl EffectcraftApp {
         let mut ui = UiState::default();
         let workspace_store = workspace_state::WorkspaceStore::load(session.config.as_deref(), &mut ui);
         EffectcraftApp {
+            #[cfg(not(target_arch = "wasm32"))]
+            stereo_view: None,
             session,
             ui,
             workspace_store,

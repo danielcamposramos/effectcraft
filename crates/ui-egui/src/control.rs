@@ -830,7 +830,12 @@ pub fn inspect(app: &EffectcraftApp, ctx: &egui::Context) -> Value {
     if let Some(v) = ui.get_mut("viewer").and_then(Value::as_object_mut) {
         v.insert("res".into(), json!(app.viewer_res()));
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let stereo = app.stereo_view.as_ref().map(|view| view.inspect());
+    #[cfg(target_arch = "wasm32")]
+    let stereo: Option<Value> = None;
     json!({
+        "stereo":stereo,
         "window": [size.x, size.y],
         "pixelsPerPoint": ctx.pixels_per_point(),
         "fps": app.fps,

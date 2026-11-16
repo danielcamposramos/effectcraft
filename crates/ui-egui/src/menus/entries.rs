@@ -73,6 +73,7 @@ pub(crate) fn entry_checked(app: &EffectcraftApp, e: &MenuEntry) -> Option<bool>
     let v = &app.ui.viewer;
     let pstr = |k: &str| e.params.get(k).and_then(Value::as_str);
     match e.command.as_str() {
+        "view.stereo" => Some(app.ui.stereo.enabled),
         "view.rulers" => Some(v.rulers),
         "view.guides" => Some(v.guides),
         "view.snapToGuides" => Some(v.snap_guides),

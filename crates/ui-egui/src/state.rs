@@ -626,6 +626,8 @@ impl ProjectStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiState {
+    #[serde(default)]
+    pub stereo: crate::stereo_settings::StereoSettings,
     pub tool: Tool,
     /// Window ▸ Script Console input, output and history.
     #[serde(default)]
@@ -764,6 +766,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            stereo: Default::default(),
             tool: Tool::Selection,
             script_console: Default::default(),
             slot_tools: Tool::SLOTS.iter().map(|s| s[0]).collect(),

@@ -151,7 +151,12 @@ fn string_literal(rest: &str) -> Option<String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn catalog_characters(language: &str) -> Vec<char> {
     let panels = catalog(language).into_iter().flat_map(|c| c.values()).flat_map(|s| s.chars());
-    panels.chain(super::effects::characters(language)).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    panels
+        .chain(super::stereo::characters(language))
+        .chain(super::effects::characters(language))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Translate one interface string: the current language's row for `text`, or `text` itself.

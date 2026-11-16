@@ -38,6 +38,7 @@ half = { workspace = true }
 bytemuck = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+craft-stereo-window = { path = "../../../craft-libs-common/crates/stereo-window" }
 # Floating panels open in OS windows of their own on desktop; the web keeps them in the page.
 craft-ui = { workspace = true, features = ["native-windows"] }
 craft-update = { workspace = true }

@@ -14,6 +14,9 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("Русский", "ru"),
     ("Українська", "uk"),
     ("ქართული", "ka"),
+    // Only the native 3D companion has a Korean catalog and font path.
+    #[cfg(not(target_arch = "wasm32"))]
+    ("한국어 (3D)", "ko"),
     ("日本語", "ja"),
     ("简体中文", "zh-hans"),
     ("繁體中文", "zh-hant"),
